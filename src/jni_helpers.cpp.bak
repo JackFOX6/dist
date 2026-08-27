@@ -1,0 +1,448 @@
+#include "../include/jni_helpers.h"
+#include <iostream>
+
+// Static member initialization
+JavaVM* JNIHelper::g_javaVm = nullptr;
+JNIEnv* JNIHelper::g_jniEnv = nullptr;
+jobject JNIHelper::g_playerInstance = nullptr;
+
+// =========================================================================================
+// INITIALIZATION
+// =========================================================================================
+
+bool JNIHelper::Initialize() {
+    typedef jint(JNICALL* JNI_GetCreatedJavaVMs_t)(JavaVM**, jsize, jsize*);
+
+    HMODULE jvmHandle = GetModuleHandleA("jvm.dll");
+    if (!jvmHandle) {
+        std::cerr << "[JNI] Failed to get jvm.dll" << std::endl;
+        return false;
+    }
+
+    JNI_GetCreatedJavaVMs_t jniGetCreatedJavaVMs =
+        (JNI_GetCreatedJavaVMs_t)GetProcAddress(jvmHandle, "JNI_GetCreatedJavaVMs");
+
+    if (!jniGetCreatedJavaVMs) {
+        std::cerr << "[JNI] Failed to get JNI_GetCreatedJavaVMs" << std::endl;
+        return false;
+    }
+
+    jsize vmCount = 0;
+    jniGetCreatedJavaVMs(nullptr, 0, &vmCount);
+
+    if (vmCount != 1) {
+        std::cerr << "[JNI] Unexpected VM count: " << vmCount << std::endl;
+        return false;
+    }
+
+    JavaVM* javaVm = nullptr;
+    jniGetCreatedJavaVMs(&javaVm, 1, nullptr);
+
+    if (!javaVm) {
+        std::cerr << "[JNI] Failed to get JavaVM" << std::endl;
+        return false;
+    }
+
+    g_javaVm = javaVm;
+
+    if (g_javaVm->AttachCurrentThread((void**)&g_jniEnv, nullptr) != JNI_OK) {
+        std::cerr << "[JNI] Failed to attach thread" << std::endl;
+        return false;
+    }
+
+    std::cout << "[+] JNI initialized successfully" << std::endl;
+    return true;
+}
+
+// =========================================================================================
+// GET LOCAL PLAYER
+// =========================================================================================
+
+bool JNIHelper::GetLocalPlayer() {
+    if (!g_jniEnv) return false;
+
+    g_jniEnv->ExceptionClear();
+
+    jclass isoPlayerClass = g_jniEnv->FindClass("zombie/characters/IsoPlayer");
+    if (!isoPlayerClass) {
+        std::cerr << "[JNI] Failed to find IsoPlayer class" << std::endl;
+        return false;
+    }
+
+    jmethodID hasInstanceMethodId = g_jniEnv->GetStaticMethodID(
+        isoPlayerClass, "hasInstance", "()Z");
+
+    if (hasInstanceMethodId) {
+        jboolean hasInstance = g_jniEnv->CallStaticBooleanMethod(
+            isoPlayerClass, hasInstanceMethodId);
+
+        if (!hasInstance) {
+            std::cout << "[JNI] Player instance not ready yet" << std::endl;
+            return false;
+        }
+    }
+
+    jmethodID getInstanceMethodId = g_jniEnv->GetStaticMethodID(
+        isoPlayerClass, "getInstance", "()Lzombie/characters/IsoPlayer;");
+
+    if (!getInstanceMethodId) {
+        std::cerr << "[JNI] Failed to get getInstance method" << std::endl;
+        return false;
+    }
+
+    jobject playerInstance = g_jniEnv->CallStaticObjectMethod(
+        isoPlayerClass, getInstanceMethodId);
+
+    if (!playerInstance) {
+        std::cout << "[JNI] Player instance is nullptr" << std::endl;
+        return false;
+    }
+
+    g_playerInstance = playerInstance;
+    std::cout << "[+] Player instance acquired" << std::endl;
+    return true;
+}
+
+// =========================================================================================
+// SET CHEAT DIRECTLY (EnumSet Manipulation - bypasses Role checks)
+// =========================================================================================
+
+void JNIHelper::SetCheatDirect(const char* cheatTypeName, bool enable) {
+    if (!g_jniEnv || !g_playerInstance) {
+        std::cout << "[JNI] Cannot set cheat: JNI not initialized or player missing" << std::endl;
+        return;
+    }
+
+    g_jniEnv->ExceptionClear();
+
+    // Get IsoGameCharacter class
+    jclass isoGameCharacterClass = g_jniEnv->FindClass("zombie/characters/IsoGameCharacter");
+    if (!isoGameCharacterClass) {
+        std::cerr << "[JNI] Failed to find IsoGameCharacter" << std::endl;
+        return;
+    }
+
+    // Get PlayerCheats object
+    jfieldID cheatsFieldId = g_jniEnv->GetFieldID(
+        isoGameCharacterClass, "cheats", "Lzombie/characters/PlayerCheats;");
+    if (!cheatsFieldId) {
+        std::cerr << "[JNI] Failed to find cheats field" << std::endl;
+        return;
+    }
+
+    jobject playerCheatsObj = g_jniEnv->GetObjectField(g_playerInstance, cheatsFieldId);
+    if (!playerCheatsObj) {
+        std::cerr << "[JNI] Failed to get PlayerCheats object" << std::endl;
+        return;
+    }
+
+    // Get PlayerCheats class
+    jclass playerCheatsClass = g_jniEnv->FindClass("zombie/characters/PlayerCheats");
+    if (!playerCheatsClass) {
+        std::cerr << "[JNI] Failed to find PlayerCheats class" << std::endl;
+        return;
+    }
+
+    // Get EnumSet field
+    jfieldID enumSetFieldId = g_jniEnv->GetFieldID(
+        playerCheatsClass, "cheats", "Ljava/util/EnumSet;");
+    if (!enumSetFieldId) {
+        std::cerr << "[JNI] Failed to find EnumSet field" << std::endl;
+        return;
+    }
+
+    jobject enumSetObj = g_jniEnv->GetObjectField(playerCheatsObj, enumSetFieldId);
+    if (!enumSetObj) {
+        std::cerr << "[JNI] Failed to get EnumSet object" << std::endl;
+        return;
+    }
+
+    // Get CheatType enum
+    jclass cheatTypeClass = g_jniEnv->FindClass("zombie/characters/CheatType");
+    if (!cheatTypeClass) {
+        std::cerr << "[JNI] Failed to find CheatType class" << std::endl;
+        return;
+    }
+
+    jfieldID cheatTypeFieldId = g_jniEnv->GetStaticFieldID(
+        cheatTypeClass, cheatTypeName, "Lzombie/characters/CheatType;");
+
+    if (!cheatTypeFieldId) {
+        std::cerr << "[JNI] Failed to find CheatType::" << cheatTypeName << std::endl;
+        g_jniEnv->ExceptionClear();
+        return;
+    }
+
+    jobject cheatTypeEnum = g_jniEnv->GetStaticObjectField(cheatTypeClass, cheatTypeFieldId);
+    if (!cheatTypeEnum) {
+        std::cerr << "[JNI] Failed to get CheatType enum" << std::endl;
+        return;
+    }
+
+    // Get EnumSet class
+    jclass enumSetClass = g_jniEnv->FindClass("java/util/EnumSet");
+    if (!enumSetClass) {
+        std::cerr << "[JNI] Failed to find EnumSet class" << std::endl;
+        return;
+    }
+
+    // Add or remove from EnumSet
+    if (enable) {
+        jmethodID addMethodId = g_jniEnv->GetMethodID(enumSetClass, "add", "(Ljava/lang/Object;)Z");
+        if (addMethodId) {
+            g_jniEnv->CallBooleanMethod(enumSetObj, addMethodId, cheatTypeEnum);
+            std::cout << "[+] " << cheatTypeName << " enabled (direct)" << std::endl;
+        }
+    } else {
+        jmethodID removeMethodId = g_jniEnv->GetMethodID(enumSetClass, "remove", "(Ljava/lang/Object;)Z");
+        if (removeMethodId) {
+            g_jniEnv->CallBooleanMethod(enumSetObj, removeMethodId, cheatTypeEnum);
+            std::cout << "[-] " << cheatTypeName << " disabled (direct)" << std::endl;
+        }
+    }
+
+    g_jniEnv->DeleteLocalRef(cheatTypeEnum);
+    g_jniEnv->DeleteLocalRef(enumSetObj);
+    g_jniEnv->DeleteLocalRef(playerCheatsObj);
+}
+
+// =========================================================================================
+// SET CHEAT VIA METHOD (Official API)
+// =========================================================================================
+
+void JNIHelper::SetCheatViaMethod(const char* methodName, bool enable) {
+    if (!g_jniEnv || !g_playerInstance) {
+        return;
+    }
+
+    g_jniEnv->ExceptionClear();
+
+    jclass playerClass = g_jniEnv->FindClass("zombie/characters/IsoPlayer");
+    if (!playerClass) {
+        std::cerr << "[JNI] Failed to find IsoPlayer class" << std::endl;
+        return;
+    }
+
+    jmethodID methodId = g_jniEnv->GetMethodID(playerClass, methodName, "(Z)V");
+    if (!methodId) {
+        std::cerr << "[JNI] Failed to find method: " << methodName << std::endl;
+        g_jniEnv->ExceptionClear();
+        return;
+    }
+
+    g_jniEnv->CallVoidMethod(g_playerInstance, methodId, (jboolean)enable);
+    std::cout << "[+] " << methodName << " set to " << (enable ? "true" : "false") << std::endl;
+}
+
+// =========================================================================================
+// SPAWN ITEM
+// =========================================================================================
+
+void JNIHelper::SpawnItem(const char* itemID, int quantity) {
+    if (!g_jniEnv || !g_playerInstance) {
+        return;
+    }
+
+    g_jniEnv->ExceptionClear();
+
+    jclass playerClass = g_jniEnv->FindClass("zombie/characters/IsoPlayer");
+    jclass gridSquareClass = g_jniEnv->FindClass("zombie/isomap/IsoGridSquare");
+    jclass itemFactoryClass = g_jniEnv->FindClass("zombie/inventory/ItemFactory");
+
+    if (!playerClass || !gridSquareClass || !itemFactoryClass) {
+        std::cerr << "[JNI] Failed to find required classes for item spawn" << std::endl;
+        return;
+    }
+
+    // Get current square
+    jmethodID getSquareMid = g_jniEnv->GetMethodID(
+        playerClass, "getCurrentSquare", "()Lzombie/isomap/IsoGridSquare;");
+    if (!getSquareMid) {
+        std::cerr << "[JNI] Failed to find getCurrentSquare" << std::endl;
+        return;
+    }
+
+    jobject squareObj = g_jniEnv->CallObjectMethod(g_playerInstance, getSquareMid);
+    if (!squareObj) {
+        std::cerr << "[JNI] Failed to get current square" << std::endl;
+        return;
+    }
+
+    // Create item
+    jmethodID createItemMid = g_jniEnv->GetStaticMethodID(
+        itemFactoryClass, "CreateItem", "(Ljava/lang/String;)Lzombie/inventory/InventoryItem;");
+    if (!createItemMid) {
+        std::cerr << "[JNI] Failed to find CreateItem" << std::endl;
+        g_jniEnv->DeleteLocalRef(squareObj);
+        return;
+    }
+
+    jstring itemTypeStr = g_jniEnv->NewStringUTF(itemID);
+    jobject itemObj = g_jniEnv->CallStaticObjectMethod(itemFactoryClass, createItemMid, itemTypeStr);
+    g_jniEnv->DeleteLocalRef(itemTypeStr);
+
+    if (!itemObj) {
+        std::cerr << "[JNI] Failed to create item: " << itemID << std::endl;
+        g_jniEnv->DeleteLocalRef(squareObj);
+        return;
+    }
+
+    // Add to world
+    jmethodID addItemMid = g_jniEnv->GetMethodID(
+        gridSquareClass, "AddWorldInventoryItem", "(Lzombie/inventory/InventoryItem;Z)V");
+    if (addItemMid) {
+        g_jniEnv->CallVoidMethod(squareObj, addItemMid, itemObj, (jboolean)1);
+    }
+
+    std::cout << "[+] Item spawned: " << itemID << " x" << quantity << std::endl;
+
+    g_jniEnv->DeleteLocalRef(itemObj);
+    g_jniEnv->DeleteLocalRef(squareObj);
+}
+
+// =========================================================================================
+// ADD XP
+// =========================================================================================
+
+void JNIHelper::AddXP(const char* perkID, float amount) {
+    if (!g_jniEnv || !g_playerInstance) {
+        return;
+    }
+
+    g_jniEnv->ExceptionClear();
+
+    jclass clientClass = g_jniEnv->FindClass("zombie/network/GameClient");
+    jclass perksClass = g_jniEnv->FindClass("zombie/characters/skills/PerkFactory$Perks");
+
+    if (!clientClass || !perksClass) {
+        std::cerr << "[JNI] Failed to find required classes for XP" << std::endl;
+        return;
+    }
+
+    // Get GameClient instance
+    jfieldID instanceField = g_jniEnv->GetStaticFieldID(
+        clientClass, "instance", "Lzombie/network/GameClient;");
+    if (!instanceField) {
+        std::cerr << "[JNI] Failed to find GameClient.instance" << std::endl;
+        return;
+    }
+
+    jobject clientInstance = g_jniEnv->GetStaticObjectField(clientClass, instanceField);
+    if (!clientInstance) {
+        std::cerr << "[JNI] Failed to get GameClient instance" << std::endl;
+        return;
+    }
+
+    // Get perk enum
+    jfieldID perkFieldId = g_jniEnv->GetStaticFieldID(
+        perksClass, perkID, "Lzombie/characters/skills/PerkFactory$Perk;");
+
+    if (perkFieldId) {
+        jobject perkObj = g_jniEnv->GetStaticObjectField(perksClass, perkFieldId);
+
+        if (perkObj) {
+            jmethodID sendXpMid = g_jniEnv->GetMethodID(
+                clientClass, "sendAddXp",
+                "(Lzombie/characters/IsoPlayer;Lzombie/characters/skills/PerkFactory$Perk;FZ)V");
+
+            if (sendXpMid) {
+                g_jniEnv->CallVoidMethod(
+                    clientInstance, sendXpMid, g_playerInstance, perkObj, amount, (jboolean)0);
+                std::cout << "[+] XP added: " << amount << " to " << perkID << std::endl;
+            }
+            g_jniEnv->DeleteLocalRef(perkObj);
+        }
+    } else {
+        g_jniEnv->ExceptionClear();
+    }
+
+    g_jniEnv->DeleteLocalRef(clientInstance);
+}
+
+// =========================================================================================
+// GET PLAYER INFO
+// =========================================================================================
+
+std::string JNIHelper::GetPlayerName() {
+    if (!g_jniEnv || !g_playerInstance) {
+        return "Unknown";
+    }
+
+    g_jniEnv->ExceptionClear();
+
+    jclass playerClass = g_jniEnv->FindClass("zombie/characters/IsoPlayer");
+    if (!playerClass) {
+        return "Unknown";
+    }
+
+    jmethodID getNameMid = g_jniEnv->GetMethodID(playerClass, "getUsername", "()Ljava/lang/String;");
+    if (!getNameMid) {
+        return "Unknown";
+    }
+
+    jstring nameStr = (jstring)g_jniEnv->CallObjectMethod(g_playerInstance, getNameMid);
+    if (!nameStr) {
+        return "Unknown";
+    }
+
+    const char* nativeString = g_jniEnv->GetStringUTFChars(nameStr, 0);
+    std::string result(nativeString);
+    g_jniEnv->ReleaseStringUTFChars(nameStr, nativeString);
+    g_jniEnv->DeleteLocalRef(nameStr);
+
+    return result;
+}
+
+float JNIHelper::GetPlayerHealth() {
+    if (!g_jniEnv || !g_playerInstance) {
+        return 0.0f;
+    }
+
+    g_jniEnv->ExceptionClear();
+
+    jclass playerClass = g_jniEnv->FindClass("zombie/characters/IsoPlayer");
+    if (!playerClass) {
+        return 0.0f;
+    }
+
+    jmethodID getHealthMid = g_jniEnv->GetMethodID(playerClass, "getHealth", "()F");
+    if (!getHealthMid) {
+        return 0.0f;
+    }
+
+    return g_jniEnv->CallFloatMethod(g_playerInstance, getHealthMid);
+}
+
+void JNIHelper::SetPlayerHealth(float health) {
+    if (!g_jniEnv || !g_playerInstance) {
+        return;
+    }
+
+    g_jniEnv->ExceptionClear();
+
+    jclass playerClass = g_jniEnv->FindClass("zombie/characters/IsoPlayer");
+    if (!playerClass) {
+        return;
+    }
+
+    jmethodID setHealthMid = g_jniEnv->GetMethodID(playerClass, "setHealth", "(F)V");
+    if (!setHealthMid) {
+        return;
+    }
+
+    g_jniEnv->CallVoidMethod(g_playerInstance, setHealthMid, health);
+}
+
+// =========================================================================================
+// CLEANUP
+// =========================================================================================
+
+void JNIHelper::Cleanup() {
+    if (g_javaVm) {
+        g_javaVm->DetachCurrentThread();
+    }
+    g_javaVm = nullptr;
+    g_jniEnv = nullptr;
+    g_playerInstance = nullptr;
+    std::cout << "[+] JNI cleaned up" << std::endl;
+}
