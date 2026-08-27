@@ -1,0 +1,41 @@
+# Build directories
+build/
+linux/build/
+bin/
+out/
+vendor/minhook/build_output/
+
+# Excluded project metadata, tools and documentation
+.agents/
+.gemini/
+session-decisions.md
+docs/
+tools/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Standalone compiler toolchains & heavy archives
+cmake-3.29.3-windows-x86_64/
+w64devkit/
+cmake.zip
+
+# Compiled binaries and shared libraries
+*.so
+*.dll
+*.exe
+*.o
+*.a
+*.lib
+linux/injector_ptrace
+
+# Runtime logs and temporary dumps
+logs/
+*.log
+
+# IDE & OS temporary files
+.DS_Store
+.vscode/
+.idea/
